@@ -21,7 +21,7 @@ export const config = {
 
   gemini: {
     apiKey: process.env.GEMINI_API_KEY && process.env.GEMINI_API_KEY !== 'your_api_key_here' ? process.env.GEMINI_API_KEY : '',
-    model: process.env.GEMINI_MODEL || 'gemini-1.5-flash',
+    model: process.env.GEMINI_MODEL || 'gemini-3.8-flash',
     isConfigured: !!(process.env.GEMINI_API_KEY && process.env.GEMINI_API_KEY.length > 5 && process.env.GEMINI_API_KEY !== 'your_api_key_here'),
   },
 

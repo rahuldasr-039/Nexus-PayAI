@@ -87,7 +87,7 @@ export class NegotiationAgent {
 
   /**
    * Live Google Gemini API Integration using @google/genai
-   * Uses Gemini 1.5 Flash (1,500 Free Requests/Day, 15 RPM, 1M Context Window)
+   * Uses Gemini 3.8 Flash / 3.6 Flash (Fast, agentic, multimodal reasoning)
    */
   private static async runLiveGemini(negotiation: any, actorId: string, apiKey: string): Promise<any> {
     const geminiClient = new GoogleGenAI({ apiKey });
@@ -99,12 +99,14 @@ PROJECT DETAILS:
 - Description: "${negotiation.project.description}"
 - Requirements: "${negotiation.project.requirements}"
 - STRICT CLIENT BUDGET CEILING: $${MoneyUtil.format(negotiation.project.budget)} ${negotiation.currency}
+- CURRENT AGREED AMOUNT: $${MoneyUtil.format(negotiation.agreedAmount || negotiation.project.budget)} ${negotiation.currency}
 
-NEGOTIATION RULES:
-1. NEVER exceed or agree to an offer higher than the client's budget ceiling ($${MoneyUtil.format(negotiation.project.budget)}).
-2. If the client asks you a question or gives an instruction (e.g. "NEED TO LOWER PRICE", questions about scope, revisions, or timeline), answer the client directly, politely, and strategically.
-3. If the client wants a lower price, counter the freelancer at a lower amount below the current offer (e.g. $420 USD).
-4. Be professional, concise, and focused on securing the highest quality deliverables for the client within budget.
+NEGOTIATION RULES & TONE:
+1. Speak naturally, professionally, and directly as an intelligent AI procurement partner.
+2. Directly answer whatever the client asks or says (e.g. greetings, "what is in your mind?", questions about scope, revisions, pricing, or timeline).
+3. If the client asks to lower the price or discount, clearly state a revised counteroffer amount (e.g. $420 USD).
+4. NEVER agree to any amount higher than the client's budget ceiling ($${MoneyUtil.format(negotiation.project.budget)}).
+5. Keep your response concise (2-4 sentences).
 `.trim();
 
     // Build chat conversation context
@@ -113,20 +115,22 @@ NEGOTIATION RULES:
     ).join('\n');
 
     const prompt = `
-Current Conversation History:
+Conversation History:
 ${conversationLines}
 
 Latest User/Client Input: "${negotiation.messages[negotiation.messages.length - 1]?.content || 'Review negotiation status'}"
 
-Respond as the AI Agent directly to the client or freelancer. If the client is asking for a lower price, propose a strategic lower counteroffer. Keep response within 2-4 sentences.
+Respond as the AI Agent directly to the client or freelancer. Answer the latest input thoughtfully and relevantly.
 `.trim();
 
-    // Candidate models prioritized for highest free tier limits (1,500 RPD) & high quality
+    // Modern Gemini models supported by Google AI Studio
     const candidateModels = [
-      config.gemini.model || 'gemini-1.5-flash',
-      'gemini-1.5-flash',
-      'gemini-2.0-flash',
-      'gemini-1.5-flash-8b'
+      config.gemini.model || 'gemini-3.8-flash',
+      'gemini-3.8-flash',
+      'gemini-3.6-flash',
+      'gemini-3.5-flash-lite',
+      'gemini-3.1-flash-lite',
+      'gemini-2.5-flash',
     ];
     const uniqueModels = [...new Set(candidateModels)];
 
@@ -143,6 +147,7 @@ Respond as the AI Agent directly to the client or freelancer. If the client is a
           }
         });
         successfulModel = model;
+        logger.info(`Successfully generated live response with Google Gemini model: ${model}`);
         break;
       } catch (err: any) {
         logger.warn(`Gemini candidate model ${model} failed, attempting next fallback...`, err.message || err);
@@ -153,7 +158,7 @@ Respond as the AI Agent directly to the client or freelancer. If the client is a
       throw new Error('All Gemini candidate models failed to generate content');
     }
 
-    const outputText = response.text || 'I have evaluated your request and will negotiate the best terms within our budget ceiling.';
+    const outputText = response.text || 'I am actively reviewing the project terms to secure the best deliverables within your budget.';
 
     // Check if Gemini recommended a lower counteroffer
     const priceMatch = outputText.match(/counter.*\$(\d+)|propose.*\$(\d+)|offer.*\$(\d+)|\$(\d+(\.\d{1,2})?)/i);
@@ -467,10 +472,46 @@ NEGOTIATION RULES:
           content: agentMessageText,
         });
 
-      } else {
-        // 7. General Client Question / Inquiry
+      } else if (
+        clientText.includes('mind') ||
+        clientText.includes('thinking') ||
+        clientText.includes('think') ||
+        clientText.includes('opinion') ||
+        clientText.includes('status') ||
+        clientText.includes('strategy') ||
+        clientText.includes('plan')
+      ) {
+        // 7. Client Inquiry: What is on your mind / Status / Strategy
         executedTool = 'analyze_project';
-        agentMessageText = `I have received your message: "${clientRawText}". As your autonomous procurement agent, I am keeping this negotiation strictly aligned with your $${MoneyUtil.format(budget)} USD budget limit. You can request further price adjustments (e.g. "NEED TO LOWER PRICE"), ask about deliverables, or proceed to contract execution.`;
+        agentMessageText = `Here is what is on my mind: Jordan has quoted $${MoneyUtil.format(negotiation.agreedAmount || lastOffer?.amount || 475)} USD for the complete startup logo suite with 3 revision rounds. This saves $${MoneyUtil.subtract(negotiation.offers[0]?.amount || 650, negotiation.agreedAmount || lastOffer?.amount || 475)} compared to the opening quote and is within your $${MoneyUtil.format(budget)} ceiling. We can either counter lower (e.g. at $420 USD) or proceed to contract execution and PayPal payment.`;
+        await NegotiationService.addMessage({
+          negotiationId: negotiation.id,
+          senderType: 'AI_AGENT',
+          channel: 'CHAT',
+          content: agentMessageText,
+        });
+
+      } else if (
+        clientText.startsWith('hi') ||
+        clientText.startsWith('hello') ||
+        clientText.startsWith('hey') ||
+        clientText.includes('good morning') ||
+        clientText.includes('good evening')
+      ) {
+        // 8. Client Greeting
+        executedTool = 'analyze_project';
+        agentMessageText = `Hello Alex! I am actively managing your procurement negotiation for "${negotiation.project.title}". We are currently positioned well within your $${MoneyUtil.format(budget)} USD budget. How would you like me to proceed with Jordan?`;
+        await NegotiationService.addMessage({
+          negotiationId: negotiation.id,
+          senderType: 'AI_AGENT',
+          channel: 'CHAT',
+          content: agentMessageText,
+        });
+
+      } else {
+        // 9. General Client Question / Inquiry
+        executedTool = 'analyze_project';
+        agentMessageText = `I have received your note: "${clientRawText}". Based on the project scope for "${negotiation.project.title}", our current target price is $${MoneyUtil.format(negotiation.agreedAmount || lastOffer?.amount || budget)} USD. Let me know if you would like me to counter lower, clarify deliverables, or proceed to contract signing.`;
         await NegotiationService.addMessage({
           negotiationId: negotiation.id,
           senderType: 'AI_AGENT',
