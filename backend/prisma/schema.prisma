@@ -1,0 +1,339 @@
+// Prisma Schema for Autonomous Freelancer Negotiator & Payer
+// PayPal AI Hackathon 2026
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum Role {
+  CLIENT
+  FREELANCER
+  ADMIN
+}
+
+enum ProjectStatus {
+  INITIATED
+  NEGOTIATING
+  AGREED
+  CONTRACT_PENDING
+  WORK_PENDING
+  APPROVED
+  PAYMENT_PENDING
+  PAID
+  PAYOUT_PENDING
+  COMPLETED
+  CANCELLED
+  DISPUTED
+}
+
+enum NegotiationStatus {
+  INITIATED
+  NEGOTIATING
+  AGREED
+  CONTRACT_PENDING
+  CANCELLED
+}
+
+enum OfferSource {
+  FREELANCER
+  AI_AGENT
+  CLIENT
+}
+
+enum OfferStatus {
+  PENDING
+  ACCEPTED
+  REJECTED
+  SUPERSEDED
+  COUNTERED
+}
+
+enum SenderType {
+  CLIENT
+  FREELANCER
+  AI_AGENT
+  SYSTEM
+}
+
+enum MessageChannel {
+  CHAT
+  EMAIL
+  SYSTEM
+}
+
+enum MessageDirection {
+  INBOUND
+  OUTBOUND
+  INTERNAL
+}
+
+enum ContractStatus {
+  DRAFT
+  PENDING_SIGNATURES
+  CLIENT_SIGNED
+  FREELANCER_SIGNED
+  FULLY_SIGNED
+  WORK_IN_PROGRESS
+  WORK_SUBMITTED
+  WORK_APPROVED
+  COMPLETED
+  CANCELLED
+}
+
+enum PaymentStatus {
+  CREATED
+  AWAITING_APPROVAL
+  AUTHORIZED
+  CAPTURED
+  FAILED
+  REFUNDED
+}
+
+enum PayoutStatus {
+  PENDING
+  PROCESSING
+  SUCCESSFUL
+  FAILED
+  RETURNED
+}
+
+model User {
+  id           String   @id @default(uuid())
+  name         String
+  email        String   @unique
+  passwordHash String
+  role         Role     @default(CLIENT)
+  paypalEmail  String?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  // Relations
+  projects               Project[]       @relation("ClientProjects")
+  freelancerNegotiations Negotiation[]   @relation("FreelancerNegotiations")
+  clientContracts        Contract[]      @relation("ClientContracts")
+  freelancerContracts    Contract[]      @relation("FreelancerContracts")
+  freelancerPayouts      Payout[]        @relation("FreelancerPayouts")
+  sentMessages           Message[]       @relation("UserSentMessages")
+  auditLogs              AuditLog[]      @relation("UserAuditLogs")
+
+  @@index([email])
+  @@index([role])
+}
+
+model Project {
+  id           String        @id @default(uuid())
+  title        String
+  description  String        @db.Text
+  requirements String        @db.Text
+  budget       Decimal       @db.Decimal(10, 2)
+  currency     String        @default("USD")
+  status       ProjectStatus @default(INITIATED)
+  clientId     String
+  client       User          @relation("ClientProjects", fields: [clientId], references: [id], onDelete: Cascade)
+  createdAt    DateTime      @default(now())
+  updatedAt    DateTime      @updatedAt
+
+  // Relations
+  negotiations Negotiation[]
+  contracts    Contract[]
+  auditLogs    AuditLog[]
+
+  @@index([clientId])
+  @@index([status])
+}
+
+model Negotiation {
+  id           String            @id @default(uuid())
+  projectId    String
+  project      Project           @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  freelancerId String
+  freelancer   User              @relation("FreelancerNegotiations", fields: [freelancerId], references: [id], onDelete: Cascade)
+  status       NegotiationStatus @default(INITIATED)
+  agreedAmount Decimal?          @db.Decimal(10, 2)
+  currency     String            @default("USD")
+  createdAt    DateTime          @default(now())
+  updatedAt    DateTime          @updatedAt
+
+  // Relations
+  offers    Offer[]
+  messages  Message[]
+  contracts Contract[]
+  agentRuns AgentRun[]
+  auditLogs AuditLog[]
+
+  @@index([projectId])
+  @@index([freelancerId])
+  @@index([status])
+}
+
+model Offer {
+  id            String      @id @default(uuid())
+  negotiationId String
+  negotiation   Negotiation @relation(fields: [negotiationId], references: [id], onDelete: Cascade)
+  amount        Decimal     @db.Decimal(10, 2)
+  currency      String      @default("USD")
+  source        OfferSource
+  status        OfferStatus @default(PENDING)
+  message       String?     @db.Text
+  acceptedAt    DateTime?
+  createdAt     DateTime    @default(now())
+  updatedAt     DateTime    @updatedAt
+
+  @@index([negotiationId])
+  @@index([status])
+}
+
+model Message {
+  id            String           @id @default(uuid())
+  negotiationId String
+  negotiation   Negotiation      @relation(fields: [negotiationId], references: [id], onDelete: Cascade)
+  senderId      String?
+  sender        User?            @relation("UserSentMessages", fields: [senderId], references: [id], onDelete: SetNull)
+  senderType    SenderType
+  channel       MessageChannel   @default(CHAT)
+  direction     MessageDirection @default(INTERNAL)
+  subject       String?
+  content       String           @db.Text
+  externalId    String?
+  metadata      Json?
+  createdAt     DateTime         @default(now())
+
+  @@index([negotiationId])
+  @@index([senderId])
+  @@index([channel])
+}
+
+model Contract {
+  id                 String         @id @default(uuid())
+  projectId          String
+  project            Project        @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  negotiationId      String
+  negotiation        Negotiation    @relation(fields: [negotiationId], references: [id], onDelete: Cascade)
+  clientId           String
+  client             User           @relation("ClientContracts", fields: [clientId], references: [id], onDelete: Cascade)
+  freelancerId       String
+  freelancer         User           @relation("FreelancerContracts", fields: [freelancerId], references: [id], onDelete: Cascade)
+  agreedAmount       Decimal        @db.Decimal(10, 2)
+  currency           String         @default("USD")
+  terms              String         @db.Text
+  documentText       String         @db.Text
+  status             ContractStatus @default(DRAFT)
+  clientSignedAt     DateTime?
+  freelancerSignedAt DateTime?
+  signedAt           DateTime?
+  createdAt          DateTime       @default(now())
+  updatedAt          DateTime       @updatedAt
+
+  // Relations
+  payments Payment[]
+
+  @@index([projectId])
+  @@index([negotiationId])
+  @@index([clientId])
+  @@index([freelancerId])
+  @@index([status])
+}
+
+model Payment {
+  id              String        @id @default(uuid())
+  contractId      String
+  contract        Contract      @relation(fields: [contractId], references: [id], onDelete: Cascade)
+  amount          Decimal       @db.Decimal(10, 2)
+  currency        String        @default("USD")
+  status          PaymentStatus @default(CREATED)
+  paypalOrderId   String?
+  paypalCaptureId String?
+  paypalAuthId    String?
+  idempotencyKey  String        @unique
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+
+  // Relations
+  payouts Payout[]
+
+  @@index([contractId])
+  @@index([status])
+  @@index([paypalOrderId])
+}
+
+model Payout {
+  id                  String       @id @default(uuid())
+  paymentId           String
+  payment             Payment      @relation(fields: [paymentId], references: [id], onDelete: Cascade)
+  freelancerId        String
+  freelancer          User         @relation("FreelancerPayouts", fields: [freelancerId], references: [id], onDelete: Cascade)
+  amount              Decimal      @db.Decimal(10, 2)
+  currency            String       @default("USD")
+  status              PayoutStatus @default(PENDING)
+  paypalPayoutBatchId String?
+  paypalPayoutItemId  String?
+  idempotencyKey      String       @unique
+  createdAt           DateTime     @default(now())
+  updatedAt           DateTime     @updatedAt
+
+  @@index([paymentId])
+  @@index([freelancerId])
+  @@index([status])
+  @@index([paypalPayoutBatchId])
+}
+
+model WebhookEvent {
+  id            String    @id @default(uuid())
+  paypalEventId String    @unique
+  eventType     String
+  resourceId    String?
+  payload       Json
+  processed     Boolean   @default(false)
+  processedAt   DateTime?
+  errorMessage  String?   @db.Text
+  createdAt     DateTime  @default(now())
+
+  @@index([paypalEventId])
+  @@index([eventType])
+  @@index([processed])
+}
+
+model AgentRun {
+  id            String      @id @default(uuid())
+  negotiationId String
+  negotiation   Negotiation @relation(fields: [negotiationId], references: [id], onDelete: Cascade)
+  model         String
+  input         Json
+  output        Json?
+  toolName      String?
+  toolArguments Json?
+  toolResult    Json?
+  success       Boolean     @default(true)
+  errorMessage  String?     @db.Text
+  createdAt     DateTime    @default(now())
+
+  @@index([negotiationId])
+  @@index([toolName])
+  @@index([success])
+}
+
+model AuditLog {
+  id            String       @id @default(uuid())
+  actorId       String?
+  actor         User?        @relation("UserAuditLogs", fields: [actorId], references: [id], onDelete: SetNull)
+  projectId     String?
+  project       Project?     @relation(fields: [projectId], references: [id], onDelete: SetNull)
+  negotiationId String?
+  negotiation   Negotiation? @relation(fields: [negotiationId], references: [id], onDelete: SetNull)
+  action        String
+  entityType    String
+  entityId      String
+  metadata      Json?
+  createdAt     DateTime     @default(now())
+
+  @@index([actorId])
+  @@index([projectId])
+  @@index([negotiationId])
+  @@index([action])
+  @@index([entityType])
+}
